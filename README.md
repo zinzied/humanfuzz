@@ -13,6 +13,8 @@ A human-like web application fuzzing library that simulates real user interactio
 - **Comprehensive Reporting**: Generates detailed reports of findings with proof-of-concept examples
 - **Animated Interface**: Real-time visual feedback during scanning operations
 - **Enhanced Protection Bypass**: Advanced techniques for bypassing web application firewalls and protections
+- **Cloudflare Bypass**: Built-in support for bypassing Cloudflare protection using cloudscraper25
+- **CAPTCHA Handling**: Detection and handling of Google reCAPTCHA and other CAPTCHA challenges
 - **Improved HTTP Handling**: Enhanced HTTP client for better request handling and performance
 
 ## Installation
@@ -71,8 +73,9 @@ from humanfuzz import HumanFuzzer
 fuzzer = HumanFuzzer(
     headless=True,
     browser_type="chromium",
-    bypass_cloudflare=True,  # Enable Cloudflare bypass
-    enhanced_http=True       # Use enhanced HTTP client
+    bypass_cloudflare=True,                  # Enable Cloudflare bypass
+    captcha_solver_api_key="YOUR_API_KEY",   # API key for CAPTCHA solving service (optional)
+    enhanced_http=True                       # Use enhanced HTTP client
 )
 
 # Start a fuzzing session
@@ -135,6 +138,8 @@ humanfuzz_cli.py scan https://example.com [options]
 - `--timeout TIMEOUT`: Request timeout in seconds (default: 30)
 - `--delay DELAY`: Delay between requests in seconds (default: 0)
 - `--bypass-cloudflare`: Enable Cloudflare bypass using cloudscraper25
+- `--captcha-solver-key KEY`: API key for external CAPTCHA solving service
+- `--screenshot DIR`: Take screenshots and save to specified directory
 - `--enhanced-http`: Use urllib4-enhanced for HTTP requests
 - `--verbose`: Enable verbose output
 - `--save-results SAVE_RESULTS`: Save raw results to JSON file
@@ -208,6 +213,18 @@ humanfuzz_cli.py scan https://example.com --auth --username admin --password sec
 humanfuzz_cli.py scan https://example.com --bypass-cloudflare --enhanced-http
 ```
 
+### Scan with CAPTCHA Handling and Screenshots
+
+```bash
+humanfuzz_cli.py scan https://example.com --captcha-solver-key "YOUR_API_KEY" --screenshot ./screenshots
+```
+
+### Comprehensive Scan with All Protection Bypass Features
+
+```bash
+humanfuzz_cli.py scan https://example.com --bypass-cloudflare --captcha-solver-key "YOUR_API_KEY" --screenshot ./screenshots --enhanced-http
+```
+
 ### API Scan with Bearer Authentication
 
 ```bash
@@ -230,6 +247,43 @@ Benefits:
 - Bypass Cloudflare's anti-bot protection
 - Access protected content for scanning
 - Maintain session context through Cloudflare challenges
+
+### CAPTCHA Handling
+
+The CAPTCHA handling feature allows HumanFuzz to detect and handle various CAPTCHA challenges, including Google reCAPTCHA v2 and v3.
+
+#### Detection
+
+HumanFuzz can automatically detect the presence of CAPTCHAs on a page, including:
+- Google reCAPTCHA v2 (checkbox and image challenges)
+- Google reCAPTCHA v3 (invisible)
+- hCaptcha
+- Generic CAPTCHA implementations
+
+#### Handling Methods
+
+HumanFuzz provides several methods for handling CAPTCHAs:
+
+1. **Manual Solving**: Pauses the scan and allows a human to solve the CAPTCHA
+2. **External CAPTCHA Solving Services**: Integration with services like 2Captcha, Anti-Captcha, etc.
+3. **Human-like Behavior**: Simulates realistic user behavior to reduce CAPTCHA triggers
+
+#### Usage
+
+To enable CAPTCHA handling with an external solving service:
+```python
+fuzzer = HumanFuzzer(captcha_solver_api_key="YOUR_API_KEY")
+```
+
+Or via the CLI:
+```bash
+humanfuzz_cli.py scan https://example.com --captcha-solver-key "YOUR_API_KEY"
+```
+
+For manual solving, simply run with visible browser:
+```bash
+humanfuzz_cli.py scan https://example.com --no-headless
+```
 
 ### Enhanced HTTP Requests
 

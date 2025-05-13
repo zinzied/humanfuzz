@@ -13,6 +13,7 @@ A human-like web application fuzzing library that simulates real user interactio
 - **Comprehensive Reporting**: Generates detailed reports of findings with proof-of-concept examples
 - **Animated Interface**: Real-time visual feedback during scanning operations
 - **Enhanced Protection Bypass**: Integration with cloudscraper25 for Cloudflare bypass
+- **CAPTCHA Handling**: Detection and handling of Google reCAPTCHA and other CAPTCHA challenges
 - **Improved HTTP Handling**: Integration with urllib4-enhanced for better HTTP requests
 
 ## Installation
@@ -27,6 +28,18 @@ pip install humanfuzz
 
 ```bash
 pip install humanfuzz[enhanced]
+```
+
+### CAPTCHA Handling Installation
+
+```bash
+pip install humanfuzz[captcha]
+```
+
+### Complete Installation (All Features)
+
+```bash
+pip install humanfuzz[enhanced,captcha]
 ```
 
 ## Quick Start
@@ -58,8 +71,9 @@ from humanfuzz import HumanFuzzer
 fuzzer = HumanFuzzer(
     headless=True,
     browser_type="chromium",
-    bypass_cloudflare=True,
-    enhanced_http=True
+    bypass_cloudflare=True,                  # Enable Cloudflare bypass
+    captcha_solver_api_key="YOUR_API_KEY",   # API key for CAPTCHA solving service (optional)
+    enhanced_http=True                       # Use enhanced HTTP client
 )
 
 # Start a fuzzing session
@@ -101,6 +115,18 @@ humanfuzz scan https://example.com --auth --username admin --password secret
 
 ```bash
 humanfuzz scan https://example.com --depth 3 --pages 20 --bypass-cloudflare --enhanced-http
+```
+
+### Scan with CAPTCHA Handling
+
+```bash
+humanfuzz scan https://example.com --captcha-solver-key "YOUR_API_KEY" --screenshot ./screenshots
+```
+
+### Comprehensive Scan with All Protection Bypass Features
+
+```bash
+humanfuzz scan https://example.com --bypass-cloudflare --captcha-solver-key "YOUR_API_KEY" --screenshot ./screenshots --enhanced-http
 ```
 
 ### API Scanning

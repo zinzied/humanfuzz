@@ -12,6 +12,7 @@ from humanfuzz.discovery import FormDiscovery
 from humanfuzz.analyzer import ResponseAnalyzer
 from humanfuzz.reporter import Reporter
 from humanfuzz.payloads import PayloadManager
+from humanfuzz.captcha_handler import CaptchaHandler
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,9 @@ class HumanFuzzer:
     form discovery, payload generation, and vulnerability detection.
     """
 
-    def __init__(self, headless: bool = True, browser_type: str = "chromium", animation_handler=None):
+    def __init__(self, headless: bool = True, browser_type: str = "chromium",
+                 animation_handler=None, captcha_solver_api_key: Optional[str] = None,
+                 bypass_cloudflare: bool = False, cloudflare_browser_settings: Optional[Dict] = None):
         """
         Initialize the HumanFuzzer.
 
@@ -126,7 +129,41 @@ class HumanFuzzer:
             headless: Whether to run the browser in headless mode
             browser_type: Type of browser to use (chromium, firefox, or webkit)
             animation_handler: Custom animation handler (optional)
+            captcha_solver_api_key: API key for external CAPTCHA solving service (optional)
+            bypass_cloudflare: Whether to enable Cloudflare bypass using cloudscraper25
+            cloudflare_browser_settings: Custom browser settings for cloudscraper25 (optional)
         """
+        # Initialize Cloudflare bypass if enabled
+        self.bypass_cloudflare = bypass_cloudflare
+        self.cloudflare_scraper = None
+
+        if bypass_cloudflare:
+            try:
+                import cloudscraper25 as cloudscraper
+                logger.info("Initializing Cloudflare bypass with cloudscraper25")
+
+                # Default browser settings for cloudscraper
+                default_settings = {
+                    'browser': 'chrome',
+                    'platform': 'windows',
+                    'desktop': True
+                }
+
+                # Use custom settings if provided, otherwise use defaults
+                browser_settings = cloudflare_browser_settings or default_settings
+
+                # Create the scraper
+                self.cloudflare_scraper = cloudscraper.create_scraper(
+                    browser=browser_settings,
+                    delay=10  # Add delay between requests
+                )
+                logger.info("Cloudflare bypass initialized successfully")
+            except ImportError:
+                logger.warning("cloudscraper25 not installed. Cloudflare bypass disabled.")
+                logger.warning("Install with: pip install cloudscraper25")
+                self.bypass_cloudflare = False
+
+        # Initialize browser controller
         self.browser = BrowserController(headless=headless, browser_type=browser_type)
         self.discovery = FormDiscovery(self.browser)
         self.analyzer = ResponseAnalyzer()
@@ -138,12 +175,16 @@ class HumanFuzzer:
         # Initialize animation handler
         self.animation = animation_handler if animation_handler else AnimationHandler()
 
-    def start_session(self, url: str) -> None:
+        # Initialize CAPTCHA handler
+        self.captcha_handler = CaptchaHandler(self.browser, solver_api_key=captcha_solver_api_key)
+
+    def start_session(self, url: str, timeout: int = 60000) -> None:
         """
         Start a new fuzzing session by navigating to the specified URL.
 
         Args:
             url: The URL to start fuzzing from
+            timeout: Navigation timeout in milliseconds (default: 60000)
         """
         logger.info(f"Starting new fuzzing session at {url}")
         self.current_url = url
@@ -152,12 +193,96 @@ class HumanFuzzer:
         self.animation.update_activity(f"Starting fuzzing session at {url}")
         self.animation.trigger_event('session_start', url=url)
 
-        # Navigate to the URL
-        self.browser.navigate(url)
+        # Set longer timeout for navigation
+        self.browser.page.set_default_timeout(timeout)
+
+        # Use Cloudflare bypass if enabled
+        if self.bypass_cloudflare and self.cloudflare_scraper:
+            try:
+                logger.info(f"Using Cloudflare bypass to access {url}")
+                self.animation.update_activity(f"Using Cloudflare bypass for {url}")
+
+                # Fetch the page using cloudscraper
+                response = self.cloudflare_scraper.get(url)
+
+                if response.status_code == 200:
+                    logger.info(f"Successfully bypassed Cloudflare protection for {url}")
+
+                    # Navigate to a blank page first
+                    self.browser.navigate("about:blank")
+
+                    # Set the content from cloudscraper
+                    self.browser.page.set_content(response.text)
+
+                    # Transfer cookies from cloudscraper to browser
+                    cookies = self.cloudflare_scraper.cookies.get_dict()
+                    for name, value in cookies.items():
+                        self.browser.context.add_cookies([{
+                            "name": name,
+                            "value": value,
+                            "url": url
+                        }])
+
+                    logger.info("Content and cookies transferred to browser")
+                else:
+                    logger.warning(f"Failed to bypass Cloudflare. Status code: {response.status_code}")
+                    # Fall back to direct navigation
+                    self.browser.navigate(url)
+            except Exception as e:
+                logger.error(f"Error using Cloudflare bypass: {e}")
+                # Fall back to direct navigation
+                self.browser.navigate(url)
+        else:
+            # Navigate to the URL directly
+            self.browser.navigate(url)
+
+        # Check for CAPTCHA
+        self.check_and_handle_captcha()
+
+    def check_and_handle_captcha(self, captcha_callback: Optional[Callable] = None) -> bool:
+        """
+        Check for CAPTCHA on the current page and handle it if found.
+
+        Args:
+            captcha_callback: Optional callback function for manual CAPTCHA solving
+
+        Returns:
+            True if no CAPTCHA was found or it was successfully handled, False otherwise
+        """
+        logger.info("Checking for CAPTCHA on current page")
+
+        # Update animation
+        self.animation.update_activity("Checking for CAPTCHA challenges")
+
+        # Detect CAPTCHA
+        is_captcha, captcha_type = self.captcha_handler.detect_captcha()
+
+        if is_captcha:
+            logger.warning(f"CAPTCHA detected: {captcha_type}")
+
+            # Update animation
+            self.animation.update_activity(f"CAPTCHA detected: {captcha_type}")
+            self.animation.trigger_event('captcha_detected', captcha_type=captcha_type)
+
+            # Try to handle the CAPTCHA
+            success = self.captcha_handler.handle_captcha(captcha_type, callback=captcha_callback)
+
+            # Update animation
+            if success:
+                self.animation.update_activity("CAPTCHA handled successfully")
+                self.animation.trigger_event('captcha_solved', captcha_type=captcha_type)
+            else:
+                self.animation.update_activity("Failed to handle CAPTCHA")
+                self.animation.trigger_event('captcha_failed', captcha_type=captcha_type)
+
+            return success
+
+        return True  # No CAPTCHA found
 
     def authenticate(self, login_url: str, username_field: str,
                     password_field: str, username: str, password: str,
-                    submit_button_selector: Optional[str] = None) -> bool:
+                    submit_button_selector: Optional[str] = None,
+                    captcha_callback: Optional[Callable] = None) -> bool:
         """
         Authenticate with the target application.
 
@@ -168,6 +293,7 @@ class HumanFuzzer:
             username: Username to use
             password: Password to use
             submit_button_selector: CSS selector for the submit button
+            captcha_callback: Optional callback function for manual CAPTCHA solving
 
         Returns:
             bool: True if authentication was successful
@@ -181,6 +307,11 @@ class HumanFuzzer:
         # Navigate to login page
         self.browser.navigate(login_url)
 
+        # Check for CAPTCHA before filling the form
+        if not self.check_and_handle_captcha(captcha_callback):
+            logger.error("Could not handle CAPTCHA on login page")
+            return False
+
         # Fill in the login form
         self.browser.fill_field(username_field, username)
         self.browser.fill_field(password_field, password)
@@ -190,6 +321,11 @@ class HumanFuzzer:
             self.browser.click(submit_button_selector)
         else:
             self.browser.submit_current_form()
+
+        # Check for CAPTCHA after submission
+        if not self.check_and_handle_captcha(captcha_callback):
+            logger.error("Could not handle CAPTCHA after login submission")
+            return False
 
         # Check if authentication was successful
         auth_success = login_url != self.browser.current_url
@@ -206,13 +342,15 @@ class HumanFuzzer:
 
         return auth_success
 
-    def fuzz_site(self, max_depth: int = 3, max_pages: int = 50) -> List[Dict]:
+    def fuzz_site(self, max_depth: int = 3, max_pages: int = 50,
+                captcha_callback: Optional[Callable] = None) -> List[Dict]:
         """
         Discover and fuzz all forms on the site up to the specified depth.
 
         Args:
             max_depth: Maximum crawl depth
             max_pages: Maximum number of pages to crawl
+            captcha_callback: Optional callback function for manual CAPTCHA solving
 
         Returns:
             List of vulnerability findings
@@ -244,7 +382,7 @@ class HumanFuzzer:
             self.browser.navigate(page)
 
             # Fuzz the page
-            self.fuzz_current_page()
+            self.fuzz_current_page(captcha_callback=captcha_callback)
 
             # Update animation
             self.animation.trigger_event('page_complete', page=page, index=i, total=len(pages))
@@ -258,9 +396,12 @@ class HumanFuzzer:
 
         return self.results
 
-    def fuzz_current_page(self) -> List[Dict]:
+    def fuzz_current_page(self, captcha_callback: Optional[Callable] = None) -> List[Dict]:
         """
         Fuzz all forms and inputs on the current page.
+
+        Args:
+            captcha_callback: Optional callback function for manual CAPTCHA solving
 
         Returns:
             List of vulnerability findings on this page
@@ -270,6 +411,11 @@ class HumanFuzzer:
 
         # Update animation
         self.animation.update_activity(f"Discovering forms on {current_url}")
+
+        # Check for CAPTCHA before fuzzing
+        if not self.check_and_handle_captcha(captcha_callback):
+            logger.warning(f"Could not handle CAPTCHA on {current_url}, skipping page")
+            return []
 
         # Discover forms and inputs on the current page
         forms = self.discovery.find_forms()

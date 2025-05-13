@@ -112,3 +112,21 @@ dmypy.json
 
 # Generated reports
 report_*.html
+ooredoo_*.html
+ooredoo_*.png
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+*.iws
+*.ipr
+.idea/
+
+# Project specific
+*.html
+*.png
+!docs/*.png  # Keep documentation images
