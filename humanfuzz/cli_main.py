@@ -61,8 +61,11 @@ def handle_scan_command(args):
         # Show summary
         console.print(f"[bold green]Scan completed![/bold green]")
         console.print(f"Found [bold]{len(results)}[/bold] potential vulnerabilities")
-        if report_file:
-            console.print(f"Report saved to: [bold]{os.path.abspath(report_file)}[/bold]")
+        if report_file is not None:
+            try:
+                console.print(f"Report saved to: [bold]{os.path.abspath(report_file)}[/bold]")
+            except TypeError:
+                console.print(f"[bold red]Error: Invalid report file path[/bold red]")
 
     except KeyboardInterrupt:
         console.print("\n[bold red]Scan interrupted by user![/bold red]")
