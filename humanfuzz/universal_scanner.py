@@ -272,7 +272,8 @@ def fuzz_website(url, max_depth=2, max_pages=10, headless=True, simulation=False
             results = animation_handler.findings
 
             # Generate a simple HTML report for simulation mode
-            generate_html_report(results, report_file)
+            if report_file:
+                generate_html_report(results, report_file)
         else:
             # Real fuzzing mode - import HumanFuzzer here to avoid circular imports
             from humanfuzz import HumanFuzzer
@@ -287,8 +288,12 @@ def fuzz_website(url, max_depth=2, max_pages=10, headless=True, simulation=False
             results = fuzzer.fuzz_site(max_depth=max_depth, max_pages=max_pages)
 
             # Generate report
-            report_file = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-            fuzzer.generate_report(report_file)
+            try:
+                report_file = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+                fuzzer.generate_report(report_file)
+            except Exception as e:
+                console.print(f"\n[bold red]Error generating report: {str(e)}[/bold red]")
+                report_file = None
 
             # Close the fuzzer
             fuzzer.close()
@@ -397,14 +402,16 @@ def simulate_fuzzing(url, max_depth, max_pages, animation_handler):
     animation_handler.update_activity("Fuzzing completed")
     time.sleep(2)
 
-def generate_html_report(findings, output_file):
+def generate_html_report(findings, output_file=None):
     """
     Generate a simple HTML report for simulation mode.
 
     Args:
         findings: List of vulnerability findings
-        output_file: Path to the output file
+        output_file: Path to the output file (optional)
     """
+    if output_file is None:
+        return
     # Count findings by severity
     severity_counts = {"high": 0, "medium": 0, "low": 0}
     for finding in findings:
@@ -597,4 +604,5 @@ def generate_html_report(findings, output_file):
     with open(output_file, 'w') as f:
         f.write(html_content)
 
-    print(f"Report saved to: {os.path.abspath(output_file)}")
+    if output_file:
+        print(f"Report saved to: {os.path.abspath(output_file)}")
