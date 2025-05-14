@@ -289,10 +289,28 @@ def fuzz_website(url, max_depth=2, max_pages=10, headless=True, simulation=False
 
             # Generate report
             try:
-                report_file = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+                # Create a timestamped report filename
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                report_dir = os.path.abspath(os.getcwd())
+                report_file = os.path.join(report_dir, f"report_{timestamp}.html")
+
+                # Ensure the directory exists
+                os.makedirs(os.path.dirname(report_file), exist_ok=True)
+
+                # Generate the report
+                console.print(f"\n[bold blue]Generating report to: {report_file}[/bold blue]")
                 fuzzer.generate_report(report_file)
+
+                # Verify the report was created
+                if os.path.exists(report_file):
+                    console.print(f"[bold green]Report successfully saved to: {report_file}[/bold green]")
+                else:
+                    console.print(f"[bold yellow]Warning: Report file was not found at: {report_file}[/bold yellow]")
+                    report_file = None
             except Exception as e:
                 console.print(f"\n[bold red]Error generating report: {str(e)}[/bold red]")
+                import traceback
+                console.print(f"[red]{traceback.format_exc()}[/red]")
                 report_file = None
 
             # Close the fuzzer
@@ -324,36 +342,206 @@ def simulate_fuzzing(url, max_depth, max_pages, animation_handler):
         max_pages: Maximum pages to crawl
         animation_handler: Animation handler to update
     """
-    # Sample vulnerability types for simulation
-    vuln_types = ["xss", "sqli", "csrf", "idor", "sensitive_data", "broken_auth"]
+    # Create realistic vulnerability types with detailed information
+    vulnerability_templates = {
+        "xss": {
+            "name": "Cross-Site Scripting (XSS)",
+            "payloads": [
+                "<script>alert('XSS')</script>",
+                "<img src=x onerror=alert('XSS')>",
+                "javascript:alert('XSS')",
+                "<svg/onload=alert('XSS')>",
+                "'-alert('XSS')-'"
+            ],
+            "descriptions": [
+                "Reflected XSS vulnerability allows attackers to execute arbitrary JavaScript in users' browsers",
+                "Stored XSS vulnerability allows persistent JavaScript injection",
+                "DOM-based XSS vulnerability in client-side code",
+                "XSS vulnerability in form input not properly sanitized",
+                "XSS vulnerability bypassing HTML encoding"
+            ],
+            "evidence": [
+                "Response contains the injected script tag without encoding",
+                "JavaScript execution confirmed in the context of the application",
+                "Alert dialog displayed when payload is processed",
+                "Payload reflected in the response without sanitization",
+                "DOM manipulation observed after payload execution"
+            ]
+        },
+        "sqli": {
+            "name": "SQL Injection",
+            "payloads": [
+                "' OR 1=1 --",
+                "'; DROP TABLE users; --",
+                "1' UNION SELECT username,password FROM users --",
+                "admin' --",
+                "' OR '1'='1"
+            ],
+            "descriptions": [
+                "SQL injection vulnerability allows unauthorized database access",
+                "Blind SQL injection vulnerability in query parameter",
+                "Time-based SQL injection vulnerability detected",
+                "SQL injection vulnerability allows authentication bypass",
+                "SQL injection vulnerability enables data extraction"
+            ],
+            "evidence": [
+                "Database error message exposed in response",
+                "Query results show unauthorized data access",
+                "Authentication bypassed with SQL injection payload",
+                "Application behavior changes with different SQL syntax",
+                "Database schema information leaked in error messages"
+            ]
+        },
+        "csrf": {
+            "name": "Cross-Site Request Forgery (CSRF)",
+            "payloads": [
+                "<img src='https://example.com/api/action?param=value'>",
+                "<form id='csrf' action='https://example.com/api/action' method='POST'><input type='hidden' name='param' value='value'></form><script>document.getElementById('csrf').submit()</script>",
+                "<iframe src='https://example.com/api/action?param=value'></iframe>",
+                "<script>fetch('https://example.com/api/action', {method: 'POST', credentials: 'include', body: 'param=value'})</script>",
+                "<a href='https://example.com/api/action?param=value' target='_blank'>Click me</a>"
+            ],
+            "descriptions": [
+                "CSRF vulnerability allows unauthorized actions on behalf of authenticated users",
+                "Missing CSRF token in sensitive form submission",
+                "CSRF protection bypass in user profile update",
+                "CSRF vulnerability in account settings modification",
+                "CSRF vulnerability in password change functionality"
+            ],
+            "evidence": [
+                "Form submission lacks anti-CSRF token",
+                "Same-site cookie restrictions not implemented",
+                "No origin validation on sensitive requests",
+                "Action performed successfully without proper validation",
+                "Missing SameSite cookie attribute"
+            ]
+        },
+        "idor": {
+            "name": "Insecure Direct Object Reference",
+            "payloads": [
+                "/api/users/2",
+                "/profile?id=1001",
+                "/download?file=../../../etc/passwd",
+                "/account/settings?user_id=admin",
+                "/documents?doc_id=12345"
+            ],
+            "descriptions": [
+                "IDOR vulnerability allows accessing other users' data",
+                "IDOR vulnerability in API endpoint exposes sensitive information",
+                "IDOR vulnerability allows unauthorized resource access",
+                "IDOR vulnerability in user profile enables account takeover",
+                "IDOR vulnerability in document management system"
+            ],
+            "evidence": [
+                "Changing resource ID in request returns another user's data",
+                "API returns sensitive data without proper authorization checks",
+                "Unauthorized access to resource confirmed",
+                "Application does not validate resource ownership",
+                "Access control check bypassed by direct reference manipulation"
+            ]
+        },
+        "sensitive_data": {
+            "name": "Sensitive Data Exposure",
+            "payloads": [
+                "/api/debug",
+                "/admin/logs",
+                "/?debug=true",
+                "/api/users?full=true",
+                "/system/status"
+            ],
+            "descriptions": [
+                "API endpoint leaks sensitive user information",
+                "Debug mode exposes internal application details",
+                "Error messages reveal database structure",
+                "Sensitive data transmitted over unencrypted channel",
+                "Directory listing enabled exposing configuration files"
+            ],
+            "evidence": [
+                "Response contains plaintext credentials",
+                "Internal IP addresses and hostnames disclosed",
+                "Stack traces exposed in error responses",
+                "PII data transmitted without encryption",
+                "Source code fragments visible in response"
+            ]
+        },
+        "broken_auth": {
+            "name": "Broken Authentication",
+            "payloads": [
+                "admin:admin",
+                "password:password123",
+                "/login?bypass=true",
+                "/reset-password?email=victim@example.com",
+                "/api/auth?remember=true"
+            ],
+            "descriptions": [
+                "Weak password policy allows brute force attacks",
+                "Session fixation vulnerability in authentication flow",
+                "Password reset functionality vulnerable to account takeover",
+                "Missing rate limiting on login attempts",
+                "Session tokens transmitted over unencrypted channel"
+            ],
+            "evidence": [
+                "Multiple login attempts without lockout",
+                "Session token remains valid after password change",
+                "Password reset link without proper validation",
+                "Default credentials accepted",
+                "Session token predictable or insufficiently random"
+            ]
+        }
+    }
 
-    # Sample pages for the target website
+    # Generate realistic pages based on the target URL
     domain = url.split("//")[-1].split("/")[0]
     base_url = url.split("/")[0] + "//" + domain
 
-    pages = [
-        f"{base_url}/",
-        f"{base_url}/login",
-        f"{base_url}/products",
-        f"{base_url}/about",
-        f"{base_url}/contact",
-        f"{base_url}/profile",
-        f"{base_url}/cart",
-        f"{base_url}/checkout",
-        f"{base_url}/search",
-        f"{base_url}/admin"
+    # Create a more realistic site structure based on common web applications
+    common_paths = [
+        "/",
+        "/login",
+        "/register",
+        "/products",
+        "/product-details",
+        "/cart",
+        "/checkout",
+        "/account",
+        "/profile",
+        "/settings",
+        "/admin",
+        "/api/users",
+        "/api/products",
+        "/search",
+        "/contact",
+        "/about",
+        "/reset-password",
+        "/blog",
+        "/faq",
+        "/terms",
+        "/privacy"
     ]
+
+    # Generate pages with query parameters for more realistic testing
+    pages = []
+    for path in common_paths[:max_pages]:
+        pages.append(f"{base_url}{path}")
+
+        # Add some pages with query parameters for more realistic testing
+        if path == "/search":
+            pages.append(f"{base_url}{path}?q=test")
+        elif path == "/product-details":
+            pages.append(f"{base_url}{path}?id=1")
+        elif path == "/api/users":
+            pages.append(f"{base_url}{path}?id=1001")
 
     # Limit pages based on max_pages
     pages = pages[:min(len(pages), max_pages)]
 
     # Update animation
     animation_handler.update_activity(f"Starting site-wide crawling (depth: {max_depth}, max pages: {max_pages})")
-    time.sleep(2)
+    time.sleep(1)
 
     # Simulate crawling
     animation_handler.update_activity(f"Crawling site structure...")
-    time.sleep(2)
+    time.sleep(1)
 
     # Update pages crawled
     animation_handler.update_stats("Pages Crawled", len(pages))
@@ -364,43 +552,116 @@ def simulate_fuzzing(url, max_depth, max_pages, animation_handler):
     for i, page in enumerate(pages):
         # Update animation
         animation_handler.update_activity(f"Fuzzing page {i+1}/{len(pages)}: {page}")
-        time.sleep(1)
+        time.sleep(0.5)
 
-        # Simulate finding forms
-        num_forms = random.randint(1, 3)
+        # Determine page type for more realistic form detection
+        page_type = page.split('/')[-1].split('?')[0]
+        if not page_type:
+            page_type = "home"
+
+        # Simulate finding forms based on page type
+        if page_type in ["login", "register", "checkout", "contact", "search", "reset-password"]:
+            num_forms = 1  # These pages typically have one main form
+        elif page_type in ["profile", "settings", "admin"]:
+            num_forms = random.randint(1, 3)  # These pages might have multiple forms
+        elif "api" in page:
+            num_forms = 0  # API endpoints typically don't have forms
+        else:
+            num_forms = random.randint(0, 2)  # Other pages might have forms
+
         animation_handler.update_activity(f"Found {num_forms} forms on {page}")
-        time.sleep(1)
+        time.sleep(0.5)
 
         # Simulate fuzzing forms
         for j in range(num_forms):
-            animation_handler.update_activity(f"Fuzzing form {j+1}/{num_forms} on {page}")
+            form_type = "unknown"
+            if page_type == "login":
+                form_type = "authentication"
+            elif page_type == "register":
+                form_type = "registration"
+            elif page_type == "checkout":
+                form_type = "payment"
+            elif page_type == "contact":
+                form_type = "contact"
+            elif page_type == "search":
+                form_type = "search"
+            elif page_type == "reset-password":
+                form_type = "password-reset"
+
+            animation_handler.update_activity(f"Fuzzing {form_type} form {j+1}/{num_forms} on {page}")
             animation_handler.update_stats("Forms Fuzzed", 1)
 
-            # Simulate sending payloads
-            num_payloads = random.randint(5, 15)
+            # Simulate sending payloads - more for authentication forms
+            if form_type in ["authentication", "registration", "payment"]:
+                num_payloads = random.randint(10, 20)  # More payloads for sensitive forms
+            else:
+                num_payloads = random.randint(5, 15)
+
             animation_handler.update_stats("Payloads Sent", num_payloads)
 
+            # Determine which vulnerabilities are more likely based on page/form type
+            likely_vulns = []
+            if form_type == "authentication":
+                likely_vulns = ["sqli", "broken_auth", "xss"]
+            elif form_type == "registration":
+                likely_vulns = ["xss", "csrf", "sensitive_data"]
+            elif form_type == "payment":
+                likely_vulns = ["csrf", "sensitive_data", "idor"]
+            elif form_type == "search":
+                likely_vulns = ["sqli", "xss"]
+            elif "api" in page:
+                likely_vulns = ["idor", "sensitive_data", "broken_auth"]
+            else:
+                likely_vulns = list(vulnerability_templates.keys())
+
+            # Higher chance of finding vulnerabilities in certain pages
+            vuln_chance = 0.1  # Base chance
+            if "admin" in page:
+                vuln_chance = 0.5  # Admin pages often have vulnerabilities
+            elif "api" in page:
+                vuln_chance = 0.4  # API endpoints often have vulnerabilities
+            elif form_type in ["authentication", "payment"]:
+                vuln_chance = 0.3  # Sensitive forms often have vulnerabilities
+
             # Simulate finding vulnerabilities
-            if random.random() < 0.3:  # 30% chance to find a vulnerability
-                vuln_type = random.choice(vuln_types)
-                severity = random.choice(["low", "medium", "high"])
+            for _ in range(random.randint(0, 3)):  # Up to 3 vulnerabilities per form
+                if random.random() < vuln_chance:
+                    # Select vulnerability type with preference for likely ones
+                    if likely_vulns and random.random() < 0.7:
+                        vuln_type = random.choice(likely_vulns)
+                    else:
+                        vuln_type = random.choice(list(vulnerability_templates.keys()))
 
-                finding = {
-                    "type": vuln_type,
-                    "severity": severity,
-                    "url": page,
-                    "description": f"Potential {vuln_type} vulnerability found",
-                    "payload": f"test_{vuln_type}_payload"
-                }
+                    vuln_info = vulnerability_templates[vuln_type]
+                    severity = random.choice(["low", "medium", "high"])
 
-                # Report finding
-                animation_handler.report_finding(finding)
+                    # Higher severity for sensitive pages
+                    if "admin" in page and random.random() < 0.7:
+                        severity = "high"
+                    elif "payment" in page and random.random() < 0.6:
+                        severity = random.choice(["medium", "high"])
 
-            time.sleep(1)
+                    # Select random payload, description and evidence
+                    payload_idx = random.randint(0, len(vuln_info["payloads"]) - 1)
+
+                    finding = {
+                        "type": vuln_info["name"],
+                        "severity": severity,
+                        "url": page,
+                        "description": vuln_info["descriptions"][payload_idx],
+                        "payload": vuln_info["payloads"][payload_idx],
+                        "evidence": vuln_info["evidence"][payload_idx]
+                    }
+
+                    # Report finding
+                    animation_handler.report_finding(finding)
+                    time.sleep(0.5)
+
+            time.sleep(0.5)
 
     # Simulate completing fuzzing
     animation_handler.update_activity("Fuzzing completed")
-    time.sleep(2)
+    time.sleep(1)
 
 def generate_html_report(findings, output_file=None):
     """
@@ -600,9 +861,8 @@ def generate_html_report(findings, output_file=None):
 </html>
 """
 
-    # Write the HTML report
-    with open(output_file, 'w') as f:
-        f.write(html_content)
-
+    # Write the HTML report only if output_file is provided
     if output_file:
+        with open(output_file, 'w') as f:
+            f.write(html_content)
         print(f"Report saved to: {os.path.abspath(output_file)}")

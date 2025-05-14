@@ -57,16 +57,33 @@ class BrowserController:
         """Get the current URL of the page."""
         return self.page.url
 
-    def navigate(self, url: str, wait_until: str = "networkidle") -> None:
+    def navigate(self, url: str, wait_until: str = "networkidle", timeout: int = 30000) -> bool:
         """
         Navigate to a URL.
 
         Args:
             url: URL to navigate to
             wait_until: When to consider navigation complete
+            timeout: Navigation timeout in milliseconds
+
+        Returns:
+            bool: True if navigation was successful, False otherwise
         """
         logger.info(f"Navigating to {url}")
-        self.page.goto(url, wait_until=wait_until)
+        try:
+            self.page.goto(url, wait_until=wait_until, timeout=timeout)
+            return True
+        except Exception as e:
+            logger.error(f"Error navigating to {url}: {e}")
+            # Try to recover by creating a new page if the current one is closed
+            try:
+                if self.page.is_closed():
+                    logger.warning("Page is closed, creating a new page")
+                    self.page = self.context.new_page()
+                    self._setup_listeners()
+            except Exception as inner_e:
+                logger.error(f"Error recovering from navigation failure: {inner_e}")
+            return False
 
     def fill_field(self, selector: str, value: str) -> None:
         """
@@ -150,15 +167,45 @@ class BrowserController:
                 response_info["status"] = response.status
                 response_info["url"] = response.url
                 response_info["headers"] = response.headers
-                response_info["body"] = response.text()
+                try:
+                    response_info["body"] = response.text()
+                except Exception as e:
+                    logger.warning(f"Could not get response body: {e}")
+                    response_info["body"] = ""
 
         self.page.once("response", handle_response)
 
-        # Submit the form by pressing Enter
-        self.page.keyboard.press("Enter")
+        # Try multiple submission methods
+        try:
+            # First try pressing Enter
+            self.page.keyboard.press("Enter")
 
-        # Wait for navigation to complete
-        self.page.wait_for_load_state("networkidle")
+            # Wait for navigation to complete with a reasonable timeout
+            try:
+                self.page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception as e:
+                logger.warning(f"Navigation timeout after form submission: {e}")
+
+            # If no response was captured, try finding and clicking a submit button
+            if not response_info:
+                logger.debug("Trying to find and click submit button")
+                try:
+                    # Try common submit button selectors
+                    for selector in ['input[type="submit"]', 'button[type="submit"]', 'button:contains("Submit")', 'button:contains("Login")']:
+                        if self.page.query_selector(selector):
+                            logger.debug(f"Found submit button with selector: {selector}")
+                            self.page.click(selector)
+                            try:
+                                self.page.wait_for_load_state("networkidle", timeout=10000)
+                            except Exception as e:
+                                logger.warning(f"Navigation timeout after clicking submit button: {e}")
+                            break
+                except Exception as e:
+                    logger.warning(f"Error finding or clicking submit button: {e}")
+
+        except Exception as e:
+            logger.error(f"Error submitting form: {e}")
+            response_info["error"] = str(e)
 
         return response_info
 

@@ -15,24 +15,28 @@ class Reporter:
     """
     Generates reports of fuzzing results.
     """
-    
+
     def __init__(self):
         """Initialize the reporter."""
         pass
-        
+
     def generate(self, findings: List[Dict], output_file: str) -> None:
         """
         Generate a report of fuzzing results.
-        
+
         Args:
             findings: List of vulnerability findings
             output_file: Path to the output file
         """
+        if not output_file:
+            logger.warning("No output file specified for report generation")
+            return
+
         logger.info(f"Generating report with {len(findings)} findings")
-        
+
         # Determine the report format based on file extension
         _, ext = os.path.splitext(output_file)
-        
+
         if ext.lower() == '.json':
             self._generate_json_report(findings, output_file)
         elif ext.lower() == '.html':
@@ -42,7 +46,7 @@ class Reporter:
         else:
             logger.warning(f"Unknown report format: {ext}. Defaulting to HTML.")
             self._generate_html_report(findings, output_file)
-            
+
     def _generate_json_report(self, findings: List[Dict], output_file: str) -> None:
         """Generate a JSON report."""
         report = {
@@ -50,44 +54,74 @@ class Reporter:
             "total_findings": len(findings),
             "findings": findings
         }
-        
-        with open(output_file, 'w') as f:
-            json.dump(report, f, indent=2)
-            
-        logger.info(f"JSON report saved to {output_file}")
-        
+
+        # Ensure the directory exists
+        output_dir = os.path.dirname(os.path.abspath(output_file))
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+            logger.info(f"Created directory: {output_dir}")
+
+        try:
+            with open(output_file, 'w') as f:
+                json.dump(report, f, indent=2)
+
+            # Verify the file was created
+            if os.path.exists(output_file):
+                logger.info(f"JSON report successfully saved to {output_file}")
+            else:
+                logger.error(f"Failed to create JSON report at {output_file}")
+        except Exception as e:
+            logger.error(f"Error saving JSON report to {output_file}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+
     def _generate_markdown_report(self, findings: List[Dict], output_file: str) -> None:
         """Generate a Markdown report."""
-        with open(output_file, 'w') as f:
-            f.write("# HumanFuzz Vulnerability Report\n\n")
-            f.write(f"Generated at: {datetime.now().isoformat()}\n\n")
-            f.write(f"Total findings: {len(findings)}\n\n")
-            
-            # Group findings by severity
-            severity_groups = {"high": [], "medium": [], "low": []}
-            for finding in findings:
-                severity = finding.get("severity", "low")
-                severity_groups[severity].append(finding)
-                
-            # Write findings by severity
-            for severity, group in severity_groups.items():
-                if group:
-                    f.write(f"## {severity.upper()} Severity ({len(group)})\n\n")
-                    
-                    for i, finding in enumerate(group, 1):
-                        f.write(f"### {i}. {finding.get('type', 'Unknown')} - {finding.get('url', 'Unknown URL')}\n\n")
-                        f.write(f"**Description:** {finding.get('description', 'No description')}\n\n")
-                        f.write(f"**Payload:** `{finding.get('payload', 'No payload')}`\n\n")
-                        
-                        if finding.get('evidence'):
-                            f.write("**Evidence:**\n\n```\n")
-                            f.write(finding.get('evidence', ''))
-                            f.write("\n```\n\n")
-                        
-                        f.write("---\n\n")
-                        
-        logger.info(f"Markdown report saved to {output_file}")
-        
+        # Ensure the directory exists
+        output_dir = os.path.dirname(os.path.abspath(output_file))
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+            logger.info(f"Created directory: {output_dir}")
+
+        try:
+            with open(output_file, 'w') as f:
+                f.write("# HumanFuzz Vulnerability Report\n\n")
+                f.write(f"Generated at: {datetime.now().isoformat()}\n\n")
+                f.write(f"Total findings: {len(findings)}\n\n")
+
+                # Group findings by severity
+                severity_groups = {"high": [], "medium": [], "low": []}
+                for finding in findings:
+                    severity = finding.get("severity", "low")
+                    severity_groups[severity].append(finding)
+
+                # Write findings by severity
+                for severity, group in severity_groups.items():
+                    if group:
+                        f.write(f"## {severity.upper()} Severity ({len(group)})\n\n")
+
+                        for i, finding in enumerate(group, 1):
+                            f.write(f"### {i}. {finding.get('type', 'Unknown')} - {finding.get('url', 'Unknown URL')}\n\n")
+                            f.write(f"**Description:** {finding.get('description', 'No description')}\n\n")
+                            f.write(f"**Payload:** `{finding.get('payload', 'No payload')}`\n\n")
+
+                            if finding.get('evidence'):
+                                f.write("**Evidence:**\n\n```\n")
+                                f.write(finding.get('evidence', ''))
+                                f.write("\n```\n\n")
+
+                            f.write("---\n\n")
+
+            # Verify the file was created
+            if os.path.exists(output_file):
+                logger.info(f"Markdown report successfully saved to {output_file}")
+            else:
+                logger.error(f"Failed to create Markdown report at {output_file}")
+        except Exception as e:
+            logger.error(f"Error saving Markdown report to {output_file}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+
     def _generate_html_report(self, findings: List[Dict], output_file: str) -> None:
         """Generate an HTML report."""
         # Count findings by severity
@@ -95,7 +129,7 @@ class Reporter:
         for finding in findings:
             severity = finding.get("severity", "low")
             severity_counts[severity] += 1
-            
+
         # Group findings by type
         type_groups = {}
         for finding in findings:
@@ -103,7 +137,7 @@ class Reporter:
             if finding_type not in type_groups:
                 type_groups[finding_type] = []
             type_groups[finding_type].append(finding)
-            
+
         # Generate HTML
         html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -179,7 +213,7 @@ class Reporter:
 <body>
     <h1>HumanFuzz Vulnerability Report</h1>
     <p>Generated at: {datetime.now().isoformat()}</p>
-    
+
     <div class="summary">
         <div>
             <h2>Summary</h2>
@@ -200,21 +234,21 @@ class Reporter:
             </div>
         </div>
     </div>
-    
+
     <h2>Findings</h2>
 """
-        
+
         # Add findings by type
         for finding_type, group in type_groups.items():
             html_content += f"<h3>{finding_type.upper()} ({len(group)})</h3>\n"
-            
+
             for finding in group:
                 severity = finding.get("severity", "low")
                 url = html.escape(finding.get("url", "Unknown URL"))
                 description = html.escape(finding.get("description", "No description"))
                 payload = html.escape(finding.get("payload", "No payload"))
                 evidence = html.escape(finding.get("evidence", "No evidence"))
-                
+
                 html_content += f"""
     <div class="finding">
         <div class="finding-header">
@@ -230,13 +264,28 @@ class Reporter:
         </div>
     </div>
 """
-                
+
         html_content += """
 </body>
 </html>
 """
-        
-        with open(output_file, 'w') as f:
-            f.write(html_content)
-            
-        logger.info(f"HTML report saved to {output_file}")
+
+        # Ensure the directory exists
+        output_dir = os.path.dirname(os.path.abspath(output_file))
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+            logger.info(f"Created directory: {output_dir}")
+
+        try:
+            with open(output_file, 'w') as f:
+                f.write(html_content)
+
+            # Verify the file was created
+            if os.path.exists(output_file):
+                logger.info(f"HTML report successfully saved to {output_file}")
+            else:
+                logger.error(f"Failed to create HTML report at {output_file}")
+        except Exception as e:
+            logger.error(f"Error saving HTML report to {output_file}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())

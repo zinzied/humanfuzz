@@ -38,6 +38,17 @@ def handle_scan_command(args):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         args.output = f"humanfuzz_report_{timestamp}.{args.format}"
 
+    # Ensure the output file has an absolute path
+    if not os.path.isabs(args.output):
+        args.output = os.path.abspath(args.output)
+
+    # Ensure the directory exists
+    output_dir = os.path.dirname(args.output)
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+
+    console.print(f"[blue]Report will be saved to: {args.output}[/blue]")
+
     try:
         # Run the scan
         console.print("[bold blue]Starting scan...[/bold blue]")
@@ -61,7 +72,7 @@ def handle_scan_command(args):
         # Show summary
         console.print(f"[bold green]Scan completed![/bold green]")
         console.print(f"Found [bold]{len(results)}[/bold] potential vulnerabilities")
-        if report_file is not None:
+        if report_file is not None and report_file:  # Check if report_file is not None and not empty
             try:
                 console.print(f"Report saved to: [bold]{os.path.abspath(report_file)}[/bold]")
             except TypeError:

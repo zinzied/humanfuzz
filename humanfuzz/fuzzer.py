@@ -282,7 +282,8 @@ class HumanFuzzer:
     def authenticate(self, login_url: str, username_field: str,
                     password_field: str, username: str, password: str,
                     submit_button_selector: Optional[str] = None,
-                    captcha_callback: Optional[Callable] = None) -> bool:
+                    captcha_callback: Optional[Callable] = None,
+                    max_retries: int = 3) -> bool:
         """
         Authenticate with the target application.
 
@@ -294,6 +295,7 @@ class HumanFuzzer:
             password: Password to use
             submit_button_selector: CSS selector for the submit button
             captcha_callback: Optional callback function for manual CAPTCHA solving
+            max_retries: Maximum number of authentication attempts
 
         Returns:
             bool: True if authentication was successful
@@ -304,43 +306,191 @@ class HumanFuzzer:
         self.animation.update_activity(f"Authenticating at {login_url}")
         self.animation.trigger_event('authentication_start', login_url=login_url)
 
-        # Navigate to login page
-        self.browser.navigate(login_url)
+        # Try authentication with retries
+        for attempt in range(1, max_retries + 1):
+            logger.info(f"Authentication attempt {attempt}/{max_retries}")
 
-        # Check for CAPTCHA before filling the form
-        if not self.check_and_handle_captcha(captcha_callback):
-            logger.error("Could not handle CAPTCHA on login page")
-            return False
+            # Navigate to login page
+            nav_success = self.browser.navigate(login_url, timeout=60000)
+            if not nav_success:
+                logger.error(f"Failed to navigate to login page on attempt {attempt}")
+                if attempt < max_retries:
+                    logger.info("Retrying authentication...")
+                    continue
+                else:
+                    logger.error("Max retries reached, authentication failed")
+                    return False
 
-        # Fill in the login form
-        self.browser.fill_field(username_field, username)
-        self.browser.fill_field(password_field, password)
+            # Wait for page to stabilize
+            try:
+                time.sleep(2)  # Give the page time to fully load
 
-        # Submit the form
-        if submit_button_selector:
-            self.browser.click(submit_button_selector)
-        else:
-            self.browser.submit_current_form()
+                # Check for CAPTCHA before filling the form
+                if not self.check_and_handle_captcha(captcha_callback):
+                    logger.warning(f"Could not handle CAPTCHA on login page (attempt {attempt})")
+                    if attempt < max_retries:
+                        continue
+                    else:
+                        logger.error("Max retries reached, authentication failed")
+                        return False
 
-        # Check for CAPTCHA after submission
-        if not self.check_and_handle_captcha(captcha_callback):
-            logger.error("Could not handle CAPTCHA after login submission")
-            return False
+                # Try to detect login form if selectors don't work
+                if attempt > 1:
+                    logger.info("Trying to auto-detect login form fields")
+                    detected_fields = self._detect_login_fields()
+                    if detected_fields:
+                        username_field = detected_fields.get("username", username_field)
+                        password_field = detected_fields.get("password", password_field)
+                        submit_button_selector = detected_fields.get("submit", submit_button_selector)
+                        logger.info(f"Using detected fields: username={username_field}, password={password_field}")
 
-        # Check if authentication was successful
-        auth_success = login_url != self.browser.current_url
+                # Fill in the login form with proper waits between actions
+                logger.info(f"Filling username field: {username_field}")
+                self.browser.fill_field(username_field, username)
+                time.sleep(0.5)  # Small delay between fields
 
-        # Update animation
-        self.animation.update_activity(
-            f"Authentication {'successful' if auth_success else 'failed'}"
-        )
+                logger.info(f"Filling password field: {password_field}")
+                self.browser.fill_field(password_field, password)
+                time.sleep(0.5)  # Small delay before submission
+
+                # Submit the form
+                if submit_button_selector:
+                    logger.info(f"Clicking submit button: {submit_button_selector}")
+                    self.browser.click(submit_button_selector)
+                else:
+                    logger.info("Submitting form using Enter key or auto-detection")
+                    self.browser.submit_current_form()
+
+                # Wait for navigation to complete
+                time.sleep(3)  # Give time for the form submission to process
+
+                # Check for CAPTCHA after submission
+                if not self.check_and_handle_captcha(captcha_callback):
+                    logger.warning(f"Could not handle CAPTCHA after login submission (attempt {attempt})")
+                    if attempt < max_retries:
+                        continue
+                    else:
+                        logger.error("Max retries reached, authentication failed")
+                        return False
+
+                # Check if authentication was successful using multiple indicators
+                auth_success = self._check_authentication_success(login_url)
+
+                if auth_success:
+                    logger.info("Authentication successful")
+                    # Update animation
+                    self.animation.update_activity("Authentication successful")
+                    self.animation.trigger_event(
+                        'authentication_complete',
+                        success=True,
+                        current_url=self.browser.current_url
+                    )
+                    return True
+                else:
+                    logger.warning(f"Authentication attempt {attempt} failed")
+                    if attempt < max_retries:
+                        logger.info("Retrying authentication...")
+                        continue
+
+            except Exception as e:
+                logger.error(f"Error during authentication attempt {attempt}: {e}")
+                if attempt < max_retries:
+                    logger.info("Retrying authentication...")
+                    continue
+
+        # If we get here, all attempts failed
+        logger.error("All authentication attempts failed")
+        self.animation.update_activity("Authentication failed")
         self.animation.trigger_event(
             'authentication_complete',
-            success=auth_success,
+            success=False,
             current_url=self.browser.current_url
         )
+        return False
 
-        return auth_success
+    def _detect_login_fields(self) -> Dict[str, str]:
+        """
+        Attempt to auto-detect login form fields.
+
+        Returns:
+            Dictionary with detected field selectors
+        """
+        detected = {}
+
+        try:
+            # Try to find username field
+            for selector in [
+                'input[type="text"][name*="user"]',
+                'input[type="text"][id*="user"]',
+                'input[type="email"]',
+                'input[name="login"]',
+                'input[id="login"]'
+            ]:
+                if self.browser.page.query_selector(selector):
+                    detected["username"] = selector
+                    logger.info(f"Auto-detected username field: {selector}")
+                    break
+
+            # Try to find password field
+            for selector in [
+                'input[type="password"]'
+            ]:
+                if self.browser.page.query_selector(selector):
+                    detected["password"] = selector
+                    logger.info(f"Auto-detected password field: {selector}")
+                    break
+
+            # Try to find submit button
+            for selector in [
+                'input[type="submit"]',
+                'button[type="submit"]',
+                'button:contains("Login")',
+                'button:contains("Sign in")',
+                'input[value="Login"]',
+                'input[value="Sign in"]'
+            ]:
+                if self.browser.page.query_selector(selector):
+                    detected["submit"] = selector
+                    logger.info(f"Auto-detected submit button: {selector}")
+                    break
+
+        except Exception as e:
+            logger.error(f"Error during login field detection: {e}")
+
+        return detected
+
+    def _check_authentication_success(self, login_url: str) -> bool:
+        """
+        Check if authentication was successful using multiple indicators.
+
+        Args:
+            login_url: The login page URL
+
+        Returns:
+            bool: True if authentication appears successful
+        """
+        # Check 1: URL changed from login page
+        url_changed = login_url != self.browser.current_url
+        logger.info(f"URL changed from login page: {url_changed}")
+
+        # Check 2: Look for common login failure messages
+        page_content = self.browser.get_page_content().lower()
+        failure_indicators = [
+            "invalid username", "invalid password", "login failed",
+            "incorrect password", "authentication failed", "wrong password"
+        ]
+        has_failure_message = any(indicator in page_content for indicator in failure_indicators)
+        logger.info(f"Has login failure message: {has_failure_message}")
+
+        # Check 3: Look for common success indicators
+        success_indicators = [
+            "welcome", "dashboard", "logout", "sign out", "profile", "account"
+        ]
+        has_success_indicator = any(indicator in page_content for indicator in success_indicators)
+        logger.info(f"Has login success indicator: {has_success_indicator}")
+
+        # Combine checks (URL changed AND no failure message AND (has success indicator OR not on login page))
+        return url_changed and not has_failure_message and (has_success_indicator or "login" not in self.browser.current_url.lower())
 
     def fuzz_site(self, max_depth: int = 3, max_pages: int = 50,
                 captcha_callback: Optional[Callable] = None) -> List[Dict]:
@@ -532,6 +682,10 @@ class HumanFuzzer:
         Args:
             output_file: Path to the output file
         """
+        if not output_file:
+            logger.warning("No output file specified for report generation")
+            return
+
         logger.info(f"Generating report to {output_file}")
 
         # Update animation
